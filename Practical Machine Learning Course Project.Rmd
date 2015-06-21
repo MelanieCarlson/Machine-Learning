@@ -1,0 +1,203 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Melanie Carlson"
+date: "Sunday, June 21, 2015"
+output: html_document
+---
+
+The goal of this project is to determine how the particpant did the excercise. This report will answer the following: How the model was built, How it was cross validated, Expected Sample Error and why I made the choices I did.
+
+##Question
+Use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants who were asked to perform barbell lifts correctly and incorrectly in 5 different ways to create an alogorithm that correctly identifies the activity quality. The five ways, as described in the study, were "exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes
+
+##Input Data
+###Load necessary libraries
+```{r}
+library(AppliedPredictiveModeling)
+library(caret)
+library(rattle)
+library(rpart.plot)
+library(randomForest)
+library(knitr)
+library(e1071)
+```
+
+###Upload Data
+```{r}
+setwd("C:/Users/Melanie/Desktop/R Code Class/Machine Learning")
+df_training <- read.csv("pml-training.csv", na.strings=c("NA",""), header=TRUE)
+colnames_train <- colnames(df_training)
+df_testing <- read.csv("pml-testing.csv", na.strings=c("NA",""), header=TRUE)
+colnames_test <- colnames(df_testing)
+```
+
+### Verify that the column names (excluding classe and problem_id) are identical in the training and test set.
+```{r}
+all.equal(colnames_train[1:length(colnames_train)-1], colnames_test[1:length(colnames_train)-1])
+```
+
+##Features
+
+###Remove Incomplete Data
+```{r}
+# Count the number of non-NAs in each col.
+nonNAs <- function(x) {
+    as.vector(apply(x, 2, function(x) length(which(!is.na(x)))))
+}
+
+# Build vector of missing data or NA columns to drop.
+colcnts <- nonNAs(df_training)
+drops <- c()
+for (cnt in 1:length(colcnts)) {
+    if (colcnts[cnt] < nrow(df_training)) {
+        drops <- c(drops, colnames_train[cnt])
+    }
+}
+
+# Drop NA data and the first 7 columns as they're unnecessary for predicting.
+df_training <- df_training[,!(names(df_training) %in% drops)]
+df_training <- df_training[,8:length(colnames(df_training))]
+
+df_testing <- df_testing[,!(names(df_testing) %in% drops)]
+df_testing <- df_testing[,8:length(colnames(df_testing))]
+```
+
+###Show remaining columns.
+```{r}
+colnames(df_training)
+colnames(df_testing)
+```
+
+###Check Covariates for Variatability
+```{r}
+nsv <- nearZeroVar(df_training, saveMetrics=TRUE)
+nsv
+```
+####All False, so no need to remove any covariates due to lack of variatability
+
+##Algorithm
+###Devided the data up into 4 sets, so able to do multiple trials of the algorithm to avoid overfitting the predictor and so things would run quicker.
+```{r}
+set.seed(2)
+ids_small <- createDataPartition(y=df_training$classe, p=0.25, list=FALSE)
+df_small1 <- df_training[ids_small,]
+df_remainder <- df_training[-ids_small,]
+set.seed(666)
+ids_small <- createDataPartition(y=df_remainder$classe, p=0.33, list=FALSE)
+df_small2 <- df_remainder[ids_small,]
+df_remainder <- df_remainder[-ids_small,]
+set.seed(666)
+ids_small <- createDataPartition(y=df_remainder$classe, p=0.5, list=FALSE)
+df_small3 <- df_remainder[ids_small,]
+df_small4 <- df_remainder[-ids_small,]
+# Divide each of these 4 sets into training (60%) and test (40%) sets.
+set.seed(666)
+inTrain <- createDataPartition(y=df_small1$classe, p=0.6, list=FALSE)
+df_small_training1 <- df_small1[inTrain,]
+df_small_testing1 <- df_small1[-inTrain,]
+set.seed(666)
+inTrain <- createDataPartition(y=df_small2$classe, p=0.6, list=FALSE)
+df_small_training2 <- df_small2[inTrain,]
+df_small_testing2 <- df_small2[-inTrain,]
+set.seed(666)
+inTrain <- createDataPartition(y=df_small3$classe, p=0.6, list=FALSE)
+df_small_training3 <- df_small3[inTrain,]
+df_small_testing3 <- df_small3[-inTrain,]
+set.seed(666)
+inTrain <- createDataPartition(y=df_small4$classe, p=0.6, list=FALSE)
+df_small_training4 <- df_small4[inTrain,]
+df_small_testing4 <- df_small4[-inTrain,]
+```
+
+##Parameters
+###Used classification trees "out of the box" and then introduce preprocessing and cross validation.
+
+##Evaluation
+###Classification Tree 
+```{r}
+set.seed(2)
+##Train
+modFit <- train(df_small_training1$classe ~ ., data = df_small_training1, method="rpart")
+print(modFit, digits=3)
+print(modFit$finalModel, digits=3)
+fancyRpartPlot(modFit$finalModel)
+##Run Against my Test Set
+predictions <- predict(modFit, newdata=df_small_testing1)
+print(confusionMatrix(predictions, df_small_testing1$classe), digits=4)
+```
+####Low Accuracy, so attempted again using reprocessing and cross validation
+```{r}
+set.seed(2)
+##Train
+modFit <- train(df_small_training1$classe ~ .,  preProcess=c("center", "scale"), trControl=trainControl(method = "cv", number = 4), data = df_small_training1, method="rpart")
+print(modFit, digits=3)
+##Run Against my Test Set
+predictions <- predict(modFit, newdata=df_small_testing1)
+print(confusionMatrix(predictions, df_small_testing1$classe), digits=4)
+```
+####Little improvement on accurancy, so decided to use Random Forest.
+###Random Forest
+```{r}
+set.seed(2)
+##Train
+modFit <- train(df_small_training1$classe ~ ., method="rf", trControl=trainControl(method = "cv", number = 4), data=df_small_training1)
+print(modFit, digits=3)
+##Run Against my Test Set
+predictions <- predict(modFit, newdata=df_small_testing1)
+print(confusionMatrix(predictions, df_small_testing1$classe), digits=4)
+##Ran Against Course Provided Test Set
+print(predict(modFit, newdata=df_testing))
+```
+####attempted again using reprocessing and cross validation
+```{r}
+set.seed(2)
+##Train
+modFit <- train(df_small_training1$classe ~ ., method="rf", preProcess=c("center", "scale"), trControl=trainControl(method = "cv", number = 4), data=df_small_training1)
+print(modFit, digits=3)
+##Run Against my Test Set
+predictions <- predict(modFit, newdata=df_small_testing1)
+print(confusionMatrix(predictions, df_small_testing1$classe), digits=4)
+##Ran Against Course Provided Test Set
+print(predict(modFit, newdata=df_testing))
+```
+####Mixed results to decided to run again using my second set of data with only Cross Validation
+```{r}
+set.seed(2)
+##Train
+modFit <- train(df_small_training2$classe ~ ., method="rf", preProcess=c("center", "scale"), trControl=trainControl(method = "cv", number = 4), data=df_small_training2)
+print(modFit, digits=3)
+##Run Against my Test Set
+predictions <- predict(modFit, newdata=df_small_testing2)
+print(confusionMatrix(predictions, df_small_testing2$classe), digits=4)
+##Ran Against Course Provided Test Set
+print(predict(modFit, newdata=df_testing))
+```
+####Looked good, so ran my 3rd set of data with only Cross Validation
+```{r}
+set.seed(2)
+##Train
+modFit <- train(df_small_training3$classe ~ ., method="rf", preProcess=c("center", "scale"), trControl=trainControl(method = "cv", number = 4), data=df_small_training3)
+print(modFit, digits=3)
+##Run Against my Test Set
+predictions <- predict(modFit, newdata=df_small_testing3)
+print(confusionMatrix(predictions, df_small_testing3$classe), digits=4)
+##Ran Against Course Provided Test Set
+print(predict(modFit, newdata=df_testing))
+```
+####Looked good, so ran my final set of data with only Cross Validation
+```{r}
+set.seed(2)
+##Train
+modFit <- train(df_small_training4$classe ~ ., method="rf", preProcess=c("center", "scale"), trControl=trainControl(method = "cv", number = 4), data=df_small_training4)
+print(modFit, digits=3)
+##Run Against my Test Set
+predictions <- predict(modFit, newdata=df_small_testing4)
+print(confusionMatrix(predictions, df_small_testing4$classe), digits=4)
+##Ran Against Course Provided Test Set
+print(predict(modFit, newdata=df_testing))
+```
+
+###Out of Sample Error Rate
+####Average of the sample error rates derived by applying the random forest method with both preprocessing and cross validation against test sets 1-4 yielding a predicted out of sample rate of 0.03584.
+
+
